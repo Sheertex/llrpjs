@@ -80,6 +80,7 @@ export class LLRPTypedParameter<
   }
 
   getField<FN extends TD['fieldDescriptors'][number]['name'], FD extends Extract<TD['fieldDescriptors'][number], { name: FN }>, DT extends GetDataTypeFromFD<FD>>(name: FN) {
+    // @ts-ignore
     return this.origin.getField(name) as DT
   }
 
