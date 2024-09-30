@@ -177,6 +177,7 @@ export class LLRPNet {
         if (rsp.getName() === resName) break
         if (startTimestamp + timeout < Date.now()) {
           this._lock.release()
+          this._tcp.destroy()
           throw new LLRPError('ERR_LLRP_READER_RESPONSE_TIMEOUT')
         }
       }
