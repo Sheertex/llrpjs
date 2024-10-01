@@ -1,117 +1,115 @@
-import { CI, MemoizedIterator, MI } from "./Iterator.js"
+// @ts-nocheck
+import { CI, MemoizedIterator, MI } from './Iterator.js'
 
 //---------------------------------------------------------------------------------------------------------------------
-const MixinInstanceOfProperty   = Symbol('MixinIdentity')
-const MixinStateProperty        = Symbol('MixinStateProperty')
+const MixinInstanceOfProperty = Symbol('MixinIdentity')
+const MixinStateProperty = Symbol('MixinStateProperty')
 
 //---------------------------------------------------------------------------------------------------------------------
 type MixinStateExtension = {
-    [MixinInstanceOfProperty]   : symbol
-    [MixinStateProperty]        : MixinState
+  [MixinInstanceOfProperty]: symbol
+  [MixinStateProperty]: MixinState
 }
 
-type MixinFunction   = ((base : AnyConstructor) => AnyConstructor) & MixinStateExtension
+type MixinFunction = ((base: AnyConstructor) => AnyConstructor) & MixinStateExtension
 
-type MixinClass      = AnyConstructor & MixinStateExtension
-
+type MixinClass = AnyConstructor & MixinStateExtension
 
 //---------------------------------------------------------------------------------------------------------------------
 class MixinWalkDepthState {
-    baseEl                          : MixinState                    = undefined
-    sourceEl                        : MixinState                    = undefined
+  baseEl: MixinState = undefined
+  sourceEl: MixinState = undefined
 
-    private $elementsByTopoLevel    : Map<number, MixinState[]>     = undefined
+  private $elementsByTopoLevel: Map<number, MixinState[]> = undefined
 
-    private $topoLevels             : number[]                      = undefined
+  private $topoLevels: number[] = undefined
 
-    linearizedByTopoLevelsSource    : MemoizedIterator<MixinState>  = MI(this.linearizedByTopoLevels())
+  linearizedByTopoLevelsSource: MemoizedIterator<MixinState> = MI(this.linearizedByTopoLevels())
 
+  static new(props: Partial<MixinWalkDepthState>) {
+    const me = new this()
 
-    static new (props : Partial<MixinWalkDepthState>) {
-        const me    = new this()
+    props && Object.assign(me, props)
 
-        props && Object.assign(me, props)
+    return me
+  }
 
-        return me
+  get topoLevels(): number[] {
+    if (this.$topoLevels !== undefined) return this.$topoLevels
+
+    return (this.$topoLevels = this.buildTopoLevels())
+  }
+
+  buildTopoLevels(): number[] {
+    return Array.from(this.elementsByTopoLevel.keys()).sort((level1, level2) => level1 - level2)
+  }
+
+  get elementsByTopoLevel(): Map<number, MixinState[]> {
+    if (this.$elementsByTopoLevel !== undefined) return this.$elementsByTopoLevel
+
+    return (this.$elementsByTopoLevel = this.buildElementsByTopoLevel())
+  }
+
+  getOrCreateLevel<T>(map: Map<number, T[]>, topoLevel: number): T[] {
+    let elementsAtLevel: T[] = map.get(topoLevel)
+
+    if (!elementsAtLevel) {
+      elementsAtLevel = []
+
+      map.set(topoLevel, elementsAtLevel)
     }
 
+    return elementsAtLevel
+  }
 
-    get topoLevels () : number[] {
-        if (this.$topoLevels !== undefined) return this.$topoLevels
+  buildElementsByTopoLevel(): Map<number, MixinState[]> {
+    let maxTopoLevel: number = 0
 
-        return this.$topoLevels = this.buildTopoLevels()
-    }
+    const baseElements: Set<MixinState> = this.baseEl ? CI(this.baseEl.walkDepthState.elementsByTopoLevel.values()).concat().toSet() : new Set()
 
+    const map = CI(this.sourceEl.requirements)
+      .map((mixin) => mixin.walkDepthState.elementsByTopoLevel)
+      .concat()
+      .reduce((elementsByTopoLevel, [topoLevel, mixins]) => {
+        if (topoLevel > maxTopoLevel) maxTopoLevel = topoLevel
 
-    buildTopoLevels () : number[] {
-        return Array.from(this.elementsByTopoLevel.keys()).sort((level1, level2) => level1 - level2)
-    }
+        this.getOrCreateLevel(elementsByTopoLevel, topoLevel).push(mixins)
 
+        return elementsByTopoLevel
+      }, new Map<number, MixinState[][]>())
 
-    get elementsByTopoLevel () : Map<number, MixinState[]> {
-        if (this.$elementsByTopoLevel !== undefined) return this.$elementsByTopoLevel
+    this.getOrCreateLevel(map, maxTopoLevel + 1).push([this.sourceEl])
 
-        return this.$elementsByTopoLevel = this.buildElementsByTopoLevel()
-    }
-
-
-    getOrCreateLevel<T> (map : Map<number, T[]>, topoLevel : number) : T[] {
-        let elementsAtLevel : T[]     = map.get(topoLevel)
-
-        if (!elementsAtLevel) {
-            elementsAtLevel     = []
-
-            map.set(topoLevel, elementsAtLevel)
-        }
-
-        return elementsAtLevel
-    }
-
-
-    buildElementsByTopoLevel () : Map<number, MixinState[]> {
-        let maxTopoLevel : number    = 0
-
-        const baseElements : Set<MixinState> =
-            this.baseEl ? CI(this.baseEl.walkDepthState.elementsByTopoLevel.values()).concat().toSet() : new Set()
-
-        const map =
-            CI(this.sourceEl.requirements)
-            .map(mixin => mixin.walkDepthState.elementsByTopoLevel)
+    return CI(map)
+      .map(([level, elements]) => {
+        return [
+          level,
+          CI(elements)
             .concat()
-            .reduce(
-                (elementsByTopoLevel, [ topoLevel, mixins ]) => {
-                    if (topoLevel > maxTopoLevel) maxTopoLevel = topoLevel
+            .uniqueOnly()
+            .filter((mixin) => !baseElements.has(mixin))
+            .sort((mixin1, mixin2) => mixin1.id - mixin2.id),
+        ]
+      })
+      .toMap()
+  }
 
-                    this.getOrCreateLevel(elementsByTopoLevel, topoLevel).push(mixins)
-
-                    return elementsByTopoLevel
-                },
-                new Map<number, MixinState[][]>()
-            )
-
-        this.getOrCreateLevel(map, maxTopoLevel + 1).push([ this.sourceEl ])
-
-        return CI(map).map(([ level, elements ]) => {
-            return [ level, CI(elements).concat().uniqueOnly().filter(mixin => !baseElements.has(mixin)).sort((mixin1, mixin2) => mixin1.id - mixin2.id) ]
-        }).toMap()
-    }
-
-
-    * linearizedByTopoLevels () : Iterable<MixinState> {
-        yield* CI(this.topoLevels).map(level => this.elementsByTopoLevel.get(level)).concat()
-    }
+  *linearizedByTopoLevels(): Iterable<MixinState> {
+    yield* CI(this.topoLevels)
+      .map((level) => this.elementsByTopoLevel.get(level))
+      .concat()
+  }
 }
 
-
 //---------------------------------------------------------------------------------------------------------------------
-type MixinId         = number
-type MixinHash       = string
+type MixinId = number
+type MixinHash = string
 
 // Note: 65535 mixins only, because of the hashing function implementation (String.fromCharCode)
-let MIXIN_ID : MixinId      = 1
+let MIXIN_ID: MixinId = 1
 
 //---------------------------------------------------------------------------------------------------------------------
-export const identity              = a => class extends a {}
+export const identity = (a) => class extends a {}
 
 // export type IdentityMixin<Base extends object>         = < T extends AnyConstructor<Base>>(base : T) => T
 //
@@ -122,159 +120,150 @@ export class ZeroBaseClass {}
 
 //---------------------------------------------------------------------------------------------------------------------
 class MixinState {
-    id                          : MixinId               = MIXIN_ID++
+  id: MixinId = MIXIN_ID++
 
-    requirements                : MixinState[]          = []
+  requirements: MixinState[] = []
 
-    baseClass                   : AnyConstructor        = ZeroBaseClass
+  baseClass: AnyConstructor = ZeroBaseClass
 
-    identitySymbol              : symbol                = undefined
+  identitySymbol: symbol = undefined
 
-    mixinLambda                 : (base : AnyConstructor) => AnyConstructor  = identity
+  mixinLambda: (base: AnyConstructor) => AnyConstructor = identity
 
-    walkDepthState              : MixinWalkDepthState   = undefined
+  walkDepthState: MixinWalkDepthState = undefined
 
-    // private $hash               : MixinHash             = ''
-    private $minimalClass       : MixinClass            = undefined
+  // private $hash               : MixinHash             = ''
+  private $minimalClass: MixinClass = undefined
 
-    name                        : string                = ''
+  name: string = ''
 
-    static minimalClassesByLinearHash : Map<MixinHash, AnyConstructor>  = new Map()
-    static baseClassesIds : Map<AnyConstructor, MixinId>                = new Map()
+  static minimalClassesByLinearHash: Map<MixinHash, AnyConstructor> = new Map()
+  static baseClassesIds: Map<AnyConstructor, MixinId> = new Map()
 
+  static new(props: Partial<MixinState>) {
+    const me = new this()
 
-    static new (props : Partial<MixinState>) {
-        const me    = new this()
+    props && Object.assign(me, props)
 
-        props && Object.assign(me, props)
+    me.walkDepthState = MixinWalkDepthState.new({ sourceEl: me, baseEl: getMixinState(me.baseClass) })
 
-        me.walkDepthState   = MixinWalkDepthState.new({ sourceEl : me, baseEl : getMixinState(me.baseClass) })
+    //------------------
+    const mixinLambda = me.mixinLambda
+    const symbol = (me.identitySymbol = Symbol(mixinLambda.name))
 
-        //------------------
-        const mixinLambda                   = me.mixinLambda
-        const symbol                        = me.identitySymbol = Symbol(mixinLambda.name)
+    const mixinLambdaWrapper: MixinFunction = Object.assign(
+      function (base: AnyConstructor): AnyConstructor {
+        const extendedClass = mixinLambda(base)
+        extendedClass.prototype[symbol] = true
+        return extendedClass
+      },
+      {
+        [MixinInstanceOfProperty]: symbol,
+        [MixinStateProperty]: me,
+      },
+    )
 
-        const mixinLambdaWrapper : MixinFunction          = Object.assign(function (base : AnyConstructor) : AnyConstructor {
-            const extendedClass                 = mixinLambda(base)
-            extendedClass.prototype[ symbol ]   = true
-            return extendedClass
-        }, {
-            [ MixinInstanceOfProperty ]     : symbol,
-            [ MixinStateProperty ]          : me
-        })
+    Object.defineProperty(mixinLambdaWrapper, Symbol.hasInstance, { value: isInstanceOfStatic })
 
-        Object.defineProperty(mixinLambdaWrapper, Symbol.hasInstance, { value : isInstanceOfStatic })
+    me.mixinLambda = mixinLambdaWrapper
 
-        me.mixinLambda                      = mixinLambdaWrapper
+    return me
+  }
 
-        return me
-    }
+  get minimalClass(): MixinClass {
+    if (this.$minimalClass !== undefined) return this.$minimalClass
 
+    return (this.$minimalClass = this.buildMinimalClass())
+  }
 
-    get minimalClass () : MixinClass {
-        if (this.$minimalClass !== undefined) return this.$minimalClass
+  // get hash () : MixinHash {
+  //     if (this.$hash !== '') return this.$hash
+  //
+  //     return this.$hash = this.buildHash()
+  // }
 
-        return this.$minimalClass = this.buildMinimalClass()
-    }
+  // buildHash () : MixinHash {
+  //     return String.fromCharCode(...this.walkDepthState.linearizedByTopoLevelsSource.map(mixin => mixin.id))
+  // }
 
+  getBaseClassMixinId(baseClass: AnyConstructor): MixinId {
+    const constructor = this.constructor as typeof MixinState
 
-    // get hash () : MixinHash {
-    //     if (this.$hash !== '') return this.$hash
-    //
-    //     return this.$hash = this.buildHash()
-    // }
+    const mixinId = constructor.baseClassesIds.get(baseClass)
 
-    // buildHash () : MixinHash {
-    //     return String.fromCharCode(...this.walkDepthState.linearizedByTopoLevelsSource.map(mixin => mixin.id))
-    // }
+    if (mixinId !== undefined) return mixinId
 
+    const newId = MIXIN_ID++
 
-    getBaseClassMixinId (baseClass : AnyConstructor) : MixinId {
-        const constructor       = this.constructor as typeof MixinState
+    constructor.baseClassesIds.set(baseClass, newId)
 
-        const mixinId           = constructor.baseClassesIds.get(baseClass)
+    return newId
+  }
 
-        if (mixinId !== undefined) return mixinId
+  buildMinimalClass(): MixinClass {
+    const self = this.constructor as typeof MixinState
 
-        const newId             = MIXIN_ID++
+    let baseCls: AnyConstructor = this.baseClass
 
-        constructor.baseClassesIds.set(baseClass, newId)
+    const minimalClassConstructor: AnyConstructor = this.walkDepthState.linearizedByTopoLevelsSource.reduce(
+      (acc, mixin) => {
+        const { cls, hash } = acc
+        const nextHash = hash + String.fromCharCode(mixin.id)
 
-        return newId
-    }
+        let wrapperCls = self.minimalClassesByLinearHash.get(nextHash)
 
+        if (!wrapperCls) {
+          wrapperCls = mixin.mixinLambda(cls)
+          mixin.name = wrapperCls.name
 
-    buildMinimalClass () : MixinClass {
-        const self      = this.constructor as typeof MixinState
+          self.minimalClassesByLinearHash.set(nextHash, wrapperCls)
+        }
 
-        let baseCls : AnyConstructor = this.baseClass
+        acc.cls = wrapperCls
+        acc.hash = nextHash
 
-        const minimalClassConstructor : AnyConstructor = this.walkDepthState.linearizedByTopoLevelsSource.reduce(
-            (acc, mixin) => {
-                const { cls, hash } = acc
-                const nextHash      = hash + String.fromCharCode(mixin.id)
+        return acc
+      },
+      { cls: baseCls, hash: String.fromCharCode(this.getBaseClassMixinId(baseCls)) },
+    ).cls
 
-                let wrapperCls      = self.minimalClassesByLinearHash.get(nextHash)
+    const minimalClass: MixinClass = Object.assign(minimalClassConstructor, {
+      [MixinInstanceOfProperty]: this.identitySymbol,
+      [MixinStateProperty]: this,
+      mix: this.mixinLambda,
+      derive: (base) => Mixin([minimalClass, base], (base) => class extends base {}),
+      $: this,
+      toString: this.toString.bind(this),
+    })
 
-                if (!wrapperCls) {
-                    wrapperCls      = mixin.mixinLambda(cls)
-                    mixin.name      = wrapperCls.name
+    Object.defineProperty(minimalClass, Symbol.hasInstance, { value: isInstanceOfStatic })
 
-                    self.minimalClassesByLinearHash.set(nextHash, wrapperCls)
-                }
+    return minimalClass
+  }
 
-                acc.cls             = wrapperCls
-                acc.hash            = nextHash
-
-                return acc
-            },
-            { cls : baseCls, hash : String.fromCharCode(this.getBaseClassMixinId(baseCls)) }
-        ).cls
-
-        const minimalClass : MixinClass = Object.assign(minimalClassConstructor, {
-            [MixinInstanceOfProperty]         : this.identitySymbol,
-            [MixinStateProperty]    : this,
-            mix                     : this.mixinLambda,
-            derive                  : (base) => Mixin([ minimalClass, base ], base => class extends base {}),
-            $                       : this,
-            toString                : this.toString.bind(this)
-        })
-
-
-        Object.defineProperty(minimalClass, Symbol.hasInstance, { value : isInstanceOfStatic })
-
-        return minimalClass
-    }
-
-
-    toString () : string {
-        return this.walkDepthState.linearizedByTopoLevelsSource.reduce(
-            (acc : string, mixin : MixinState) => `${mixin.name}(${acc})`,
-            this.baseClass.name
-        )
-    }
+  toString(): string {
+    return this.walkDepthState.linearizedByTopoLevelsSource.reduce((acc: string, mixin: MixinState) => `${mixin.name}(${acc})`, this.baseClass.name)
+  }
 }
-
-
 
 //---------------------------------------------------------------------------------------------------------------------
 // translates all properties of the given type T, except its "new-ability" (which will mess up the typing)
 type SuppressNew<T> = {
-    [ K in keyof T ] : T[ K ]
+  [K in keyof T]: T[K]
 }
 
 /**
  * A type that represents a function with the `Result` return type.
  */
-export type AnyFunction<Result = any>        = (...input : any[]) => Result
+export type AnyFunction<Result = any> = (...input: any[]) => Result
 
-type AnyConstructorRaw<Instance extends object = object, Static extends object = object>  = (new (...input : any[]) => Instance) & Static
+type AnyConstructorRaw<Instance extends object = object, Static extends object = object> = (new (...input: any[]) => Instance) & Static
 
 /**
  * A type that represents a constructor function, that returns `Instance` type on instantiation. The properties of the function itself
  * are typed with `Static` argument. These properties will correspond to the static methods/properties of the class.
  */
-export type AnyConstructor<Instance extends object = object, Static extends object = object>  = (new (...input : any[]) => Instance) & SuppressNew<Static>
+export type AnyConstructor<Instance extends object = object, Static extends object = object> = (new (...input: any[]) => Instance) & SuppressNew<Static>
 
 //---------------------------------------------------------------------------------------------------------------------
 type ZeroBaseClassConstructor = typeof ZeroBaseClass
@@ -283,249 +272,160 @@ type ZeroBaseClassConstructor = typeof ZeroBaseClass
  * Type helper for mixins creation. Supports up to 5 class constructor arguments. May lead to compilation errors in some edges cases.
  * See the [[Mixin]] for details.
  */
-export type ClassUnion<
-    C1 extends AnyConstructor = ZeroBaseClassConstructor,
-    C2 extends AnyConstructor = ZeroBaseClassConstructor,
-    C3 extends AnyConstructor = ZeroBaseClassConstructor,
-    C4 extends AnyConstructor = ZeroBaseClassConstructor,
-    C5 extends AnyConstructor = ZeroBaseClassConstructor
-> =
-    (new (...input : any[]) => InstanceType<C1> & InstanceType<C2> & InstanceType<C3> & InstanceType<C4> & InstanceType<C5>) & SuppressNew<C1 & C2 & C3 & C4 & C5>
-
+export type ClassUnion<C1 extends AnyConstructor = ZeroBaseClassConstructor, C2 extends AnyConstructor = ZeroBaseClassConstructor, C3 extends AnyConstructor = ZeroBaseClassConstructor, C4 extends AnyConstructor = ZeroBaseClassConstructor, C5 extends AnyConstructor = ZeroBaseClassConstructor> = (new (...input: any[]) => InstanceType<C1> & InstanceType<C2> & InstanceType<C3> & InstanceType<C4> & InstanceType<C5>) & SuppressNew<C1 & C2 & C3 & C4 & C5>
 
 //---------------------------------------------------------------------------------------------------------------------
 // custom version of Omit<T> that preserves the "new"-ability of the given type
-type Omit2<T, K extends keyof any> = T extends AnyConstructorRaw<infer I> ? Pick<T, Exclude<keyof T, K>> & (new (...args : any[]) => I) : never
+type Omit2<T, K extends keyof any> = T extends AnyConstructorRaw<infer I> ? Pick<T, Exclude<keyof T, K>> & (new (...args: any[]) => I) : never
 
+type MixinClassConstructor<T> = T extends AnyFunction<infer M>
+  ? Omit2<M, 'mix' | 'derive'> & {
+      mix?: Parameters<T> extends [infer Base] ? (Base extends AnyConstructorRaw ? (M extends AnyConstructorRaw<infer MI, infer MS> ? <TT extends Base>(base: TT) => TT extends AnyConstructorRaw<infer BI, infer BS> ? AnyConstructorRaw<BI & MI, BS & MS> : never : never) : never) : never
 
-type MixinClassConstructor<T> =
-    T extends AnyFunction<infer M> ?
-        Omit2<M, 'mix' | 'derive'> & {
-
-            mix?        :
-                Parameters<T> extends [ infer Base ] ?
-                    Base extends AnyConstructorRaw ?
-                        M extends AnyConstructorRaw<infer MI, infer MS> ?
-                            <TT extends Base>(base : TT) => TT extends AnyConstructorRaw<infer BI, infer BS> ? AnyConstructorRaw<BI & MI, BS & MS> : never
-                        : never
-                    : never
-                : never
-
-            derive? :
-                Parameters<T> extends [ infer Base ] ?
-                    Base extends AnyConstructorRaw<infer I, infer S> ?
-                        M extends AnyConstructorRaw<infer MI, infer MS> ?
-                            <TT extends AnyConstructorRaw>(base : TT) => TT extends AnyConstructorRaw<infer BI, infer BS> ? AnyConstructorRaw<BI & I & MI, BS & S & MS> : never
-                        : never
-                    : never
-                : never
-        }
-    : never
-
+      derive?: Parameters<T> extends [infer Base] ? (Base extends AnyConstructorRaw<infer I, infer S> ? (M extends AnyConstructorRaw<infer MI, infer MS> ? <TT extends AnyConstructorRaw>(base: TT) => TT extends AnyConstructorRaw<infer BI, infer BS> ? AnyConstructorRaw<BI & I & MI, BS & S & MS> : never : never) : never) : never
+    }
+  : never
 
 //---------------------------------------------------------------------------------------------------------------------
 //region type helpers
-type MixinHelperFuncAny = <T>(required : AnyConstructor[], arg : T) =>
-    T extends AnyFunction ?
-        MixinClassConstructor<T>
-    : never
+type MixinHelperFuncAny = <T>(required: AnyConstructor[], arg: T) => T extends AnyFunction ? MixinClassConstructor<T> : never
 
+type MixinHelperFunc0 = <T>(required: [], arg: T) => T extends AnyFunction ? (Parameters<T> extends [infer Base] ? (Base extends AnyConstructor<object> ? (object extends InstanceType<Base> ? MixinClassConstructor<T> : never) : never) : never) : never
 
-type MixinHelperFunc0 = <T>(required : [], arg : T) =>
-    T extends AnyFunction ?
-        Parameters<T> extends [ infer Base ] ?
-            Base extends AnyConstructor<object> ?
-                object extends InstanceType<Base> ?
-                    MixinClassConstructor<T>
-                : never
-            : never
+type MixinHelperFunc1 = <A1 extends AnyConstructor, T>(required: [A1], arg: T) => T extends AnyFunction ? (Parameters<T> extends [infer Base] ? (Base extends AnyConstructor<InstanceType<A1>, A1> ? (InstanceType<A1> extends InstanceType<Base> ? MixinClassConstructor<T> : never) : never) : never) : never
+
+type MixinHelperFunc2 = <A1 extends AnyConstructor, A2 extends AnyConstructor, T>(required: [A1, A2], arg: T) => T extends AnyFunction ? (Parameters<T> extends [infer Base] ? (Base extends AnyConstructor<InstanceType<A1> & InstanceType<A2>, A1 & A2> ? (InstanceType<A1> & InstanceType<A2> extends InstanceType<Base> ? MixinClassConstructor<T> : never) : never) : never) : never
+
+type MixinHelperFunc3 = <A1 extends AnyConstructor, A2 extends AnyConstructor, A3 extends AnyConstructor, T>(required: [A1, A2, A3], arg: T) => T extends AnyFunction ? (Parameters<T> extends [infer Base] ? (Base extends AnyConstructor<InstanceType<A1> & InstanceType<A2> & InstanceType<A3>, A1 & A2 & A3> ? (InstanceType<A1> & InstanceType<A2> & InstanceType<A3> extends InstanceType<Base> ? MixinClassConstructor<T> : never) : never) : never) : never
+
+type MixinHelperFunc4 = <A1 extends AnyConstructor, A2 extends AnyConstructor, A3 extends AnyConstructor, A4 extends AnyConstructor, T>(
+  required: [A1, A2, A3, A4],
+  arg: T,
+) => T extends AnyFunction ? (Parameters<T> extends [infer Base] ? (Base extends AnyConstructor<InstanceType<A1> & InstanceType<A2> & InstanceType<A3> & InstanceType<A4>, A1 & A2 & A3 & A4> ? (InstanceType<A1> & InstanceType<A2> & InstanceType<A3> & InstanceType<A4> extends InstanceType<Base> ? MixinClassConstructor<T> : never) : never) : never) : never
+
+type MixinHelperFunc5 = <A1 extends AnyConstructor, A2 extends AnyConstructor, A3 extends AnyConstructor, A4 extends AnyConstructor, A5 extends AnyConstructor, T>(
+  required: [A1, A2, A3, A4, A5],
+  arg: T,
+) => T extends AnyFunction ? (Parameters<T> extends [infer Base] ? (Base extends AnyConstructor<InstanceType<A1> & InstanceType<A2> & InstanceType<A3> & InstanceType<A4> & InstanceType<A5>, A1 & A2 & A3 & A4 & A5> ? (InstanceType<A1> & InstanceType<A2> & InstanceType<A3> & InstanceType<A4> & InstanceType<A5> extends InstanceType<Base> ? MixinClassConstructor<T> : never) : never) : never) : never
+
+type MixinHelperFunc6 = <A1 extends AnyConstructor, A2 extends AnyConstructor, A3 extends AnyConstructor, A4 extends AnyConstructor, A5 extends AnyConstructor, A6 extends AnyConstructor, T>(
+  required: [A1, A2, A3, A4, A5, A6],
+  arg: T,
+) => T extends AnyFunction ? (Parameters<T> extends [infer Base] ? (Base extends AnyConstructor<InstanceType<A1> & InstanceType<A2> & InstanceType<A3> & InstanceType<A4> & InstanceType<A5> & InstanceType<A6>, A1 & A2 & A3 & A4 & A5 & A6> ? (InstanceType<A1> & InstanceType<A2> & InstanceType<A3> & InstanceType<A4> & InstanceType<A5> & InstanceType<A6> extends InstanceType<Base> ? MixinClassConstructor<T> : never) : never) : never) : never
+
+type MixinHelperFunc7 = <A1 extends AnyConstructor, A2 extends AnyConstructor, A3 extends AnyConstructor, A4 extends AnyConstructor, A5 extends AnyConstructor, A6 extends AnyConstructor, A7 extends AnyConstructor, T>(
+  required: [A1, A2, A3, A4, A5, A6, A7],
+  arg: T,
+) => T extends AnyFunction ? (Parameters<T> extends [infer Base] ? (Base extends AnyConstructor<InstanceType<A1> & InstanceType<A2> & InstanceType<A3> & InstanceType<A4> & InstanceType<A5> & InstanceType<A6> & InstanceType<A7>, A1 & A2 & A3 & A4 & A5 & A6 & A7> ? (InstanceType<A1> & InstanceType<A2> & InstanceType<A3> & InstanceType<A4> & InstanceType<A5> & InstanceType<A6> & InstanceType<A7> extends InstanceType<Base> ? MixinClassConstructor<T> : never) : never) : never) : never
+
+type MixinHelperFunc8 = <A1 extends AnyConstructor, A2 extends AnyConstructor, A3 extends AnyConstructor, A4 extends AnyConstructor, A5 extends AnyConstructor, A6 extends AnyConstructor, A7 extends AnyConstructor, A8 extends AnyConstructor, T>(
+  required: [A1, A2, A3, A4, A5, A6, A7, A8],
+  arg: T,
+) => T extends AnyFunction
+  ? Parameters<T> extends [infer Base]
+    ? Base extends AnyConstructor<InstanceType<A1> & InstanceType<A2> & InstanceType<A3> & InstanceType<A4> & InstanceType<A5> & InstanceType<A6> & InstanceType<A7> & InstanceType<A8>, A1 & A2 & A3 & A4 & A5 & A6 & A7 & A8>
+      ? InstanceType<A1> & InstanceType<A2> & InstanceType<A3> & InstanceType<A4> & InstanceType<A5> & InstanceType<A6> & InstanceType<A7> & InstanceType<A8> extends InstanceType<Base>
+        ? MixinClassConstructor<T>
         : never
+      : never
     : never
+  : never
 
-type MixinHelperFunc1 = <A1 extends AnyConstructor, T>(required : [ A1 ], arg : T) =>
-    T extends AnyFunction ?
-        Parameters<T> extends [ infer Base ] ?
-            Base extends AnyConstructor<InstanceType<A1>, A1> ?
-                InstanceType<A1> extends InstanceType<Base> ?
-                    MixinClassConstructor<T>
-                : never
-            : never
+type MixinHelperFunc9 = <A1 extends AnyConstructor, A2 extends AnyConstructor, A3 extends AnyConstructor, A4 extends AnyConstructor, A5 extends AnyConstructor, A6 extends AnyConstructor, A7 extends AnyConstructor, A8 extends AnyConstructor, A9 extends AnyConstructor, T>(
+  required: [A1, A2, A3, A4, A5, A6, A7, A8, A9],
+  arg: T,
+) => T extends AnyFunction
+  ? Parameters<T> extends [infer Base]
+    ? Base extends AnyConstructor<InstanceType<A1> & InstanceType<A2> & InstanceType<A3> & InstanceType<A4> & InstanceType<A5> & InstanceType<A6> & InstanceType<A7> & InstanceType<A8> & InstanceType<A9>, A1 & A2 & A3 & A4 & A5 & A6 & A7 & A8 & A9>
+      ? InstanceType<A1> & InstanceType<A2> & InstanceType<A3> & InstanceType<A4> & InstanceType<A5> & InstanceType<A6> & InstanceType<A7> & InstanceType<A8> & InstanceType<A9> extends InstanceType<Base>
+        ? MixinClassConstructor<T>
         : never
+      : never
     : never
+  : never
 
-type MixinHelperFunc2 = <A1 extends AnyConstructor, A2 extends AnyConstructor, T>(required : [ A1, A2 ], arg : T) =>
-    T extends AnyFunction ?
-        Parameters<T> extends [ infer Base ] ?
-            Base extends AnyConstructor<InstanceType<A1> & InstanceType<A2>, A1 & A2> ?
-                InstanceType<A1> & InstanceType<A2> extends InstanceType<Base> ?
-                    MixinClassConstructor<T>
-                : never
-            : never
+type MixinHelperFunc10 = <A1 extends AnyConstructor, A2 extends AnyConstructor, A3 extends AnyConstructor, A4 extends AnyConstructor, A5 extends AnyConstructor, A6 extends AnyConstructor, A7 extends AnyConstructor, A8 extends AnyConstructor, A9 extends AnyConstructor, A10 extends AnyConstructor, T>(
+  required: [A1, A2, A3, A4, A5, A6, A7, A8, A9, A10],
+  arg: T,
+) => T extends AnyFunction
+  ? Parameters<T> extends [infer Base]
+    ? Base extends AnyConstructor<InstanceType<A1> & InstanceType<A2> & InstanceType<A3> & InstanceType<A4> & InstanceType<A5> & InstanceType<A6> & InstanceType<A7> & InstanceType<A8> & InstanceType<A9> & InstanceType<A10>, A1 & A2 & A3 & A4 & A5 & A6 & A7 & A8 & A9 & A10>
+      ? InstanceType<A1> & InstanceType<A2> & InstanceType<A3> & InstanceType<A4> & InstanceType<A5> & InstanceType<A6> & InstanceType<A7> & InstanceType<A8> & InstanceType<A9> & InstanceType<A10> extends InstanceType<Base>
+        ? MixinClassConstructor<T>
         : never
+      : never
     : never
-
-type MixinHelperFunc3 = <A1 extends AnyConstructor, A2 extends AnyConstructor, A3 extends AnyConstructor, T>(required : [ A1, A2, A3 ], arg : T) =>
-    T extends AnyFunction ?
-        Parameters<T> extends [ infer Base ] ?
-            Base extends AnyConstructor<InstanceType<A1> & InstanceType<A2> & InstanceType<A3>, A1 & A2 & A3> ?
-                InstanceType<A1> & InstanceType<A2> & InstanceType<A3> extends InstanceType<Base> ?
-                    MixinClassConstructor<T>
-                : never
-            : never
-        : never
-    : never
-
-type MixinHelperFunc4 = <A1 extends AnyConstructor, A2 extends AnyConstructor, A3 extends AnyConstructor, A4 extends AnyConstructor, T>(required : [ A1, A2, A3, A4 ], arg : T) =>
-    T extends AnyFunction ?
-        Parameters<T> extends [ infer Base ] ?
-            Base extends AnyConstructor<InstanceType<A1> & InstanceType<A2> & InstanceType<A3> & InstanceType<A4>, A1 & A2 & A3 & A4> ?
-                InstanceType<A1> & InstanceType<A2> & InstanceType<A3> & InstanceType<A4> extends InstanceType<Base> ?
-                    MixinClassConstructor<T>
-                : never
-            : never
-        : never
-    : never
-
-type MixinHelperFunc5 = <A1 extends AnyConstructor, A2 extends AnyConstructor, A3 extends AnyConstructor, A4 extends AnyConstructor, A5 extends AnyConstructor, T>(required : [ A1, A2, A3, A4, A5 ], arg : T) =>
-    T extends AnyFunction ?
-        Parameters<T> extends [ infer Base ] ?
-            Base extends AnyConstructor<InstanceType<A1> & InstanceType<A2> & InstanceType<A3> & InstanceType<A4> & InstanceType<A5>, A1 & A2 & A3 & A4 & A5> ?
-                InstanceType<A1> & InstanceType<A2> & InstanceType<A3> & InstanceType<A4> & InstanceType<A5> extends InstanceType<Base> ?
-                    MixinClassConstructor<T>
-                : never
-            : never
-        : never
-    : never
-
-type MixinHelperFunc6 = <A1 extends AnyConstructor, A2 extends AnyConstructor, A3 extends AnyConstructor, A4 extends AnyConstructor, A5 extends AnyConstructor, A6 extends AnyConstructor, T>(required : [ A1, A2, A3, A4, A5, A6 ], arg : T) =>
-    T extends AnyFunction ?
-        Parameters<T> extends [ infer Base ] ?
-            Base extends AnyConstructor<InstanceType<A1> & InstanceType<A2> & InstanceType<A3> & InstanceType<A4> & InstanceType<A5> & InstanceType<A6>, A1 & A2 & A3 & A4 & A5 & A6> ?
-                InstanceType<A1> & InstanceType<A2> & InstanceType<A3> & InstanceType<A4> & InstanceType<A5> & InstanceType<A6> extends InstanceType<Base> ?
-                    MixinClassConstructor<T>
-                : never
-            : never
-        : never
-    : never
-
-type MixinHelperFunc7 = <A1 extends AnyConstructor, A2 extends AnyConstructor, A3 extends AnyConstructor, A4 extends AnyConstructor, A5 extends AnyConstructor, A6 extends AnyConstructor, A7 extends AnyConstructor, T>(required : [ A1, A2, A3, A4, A5, A6, A7 ], arg : T) =>
-    T extends AnyFunction ?
-        Parameters<T> extends [ infer Base ] ?
-            Base extends AnyConstructor<InstanceType<A1> & InstanceType<A2> & InstanceType<A3> & InstanceType<A4> & InstanceType<A5> & InstanceType<A6> & InstanceType<A7>, A1 & A2 & A3 & A4 & A5 & A6 & A7> ?
-                InstanceType<A1> & InstanceType<A2> & InstanceType<A3> & InstanceType<A4> & InstanceType<A5> & InstanceType<A6> & InstanceType<A7> extends InstanceType<Base> ?
-                    MixinClassConstructor<T>
-                : never
-            : never
-        : never
-    : never
-
-type MixinHelperFunc8 = <A1 extends AnyConstructor, A2 extends AnyConstructor, A3 extends AnyConstructor, A4 extends AnyConstructor, A5 extends AnyConstructor, A6 extends AnyConstructor, A7 extends AnyConstructor, A8 extends AnyConstructor, T>(required : [ A1, A2, A3, A4, A5, A6, A7, A8 ], arg : T) =>
-    T extends AnyFunction ?
-        Parameters<T> extends [ infer Base ] ?
-            Base extends AnyConstructor<InstanceType<A1> & InstanceType<A2> & InstanceType<A3> & InstanceType<A4> & InstanceType<A5> & InstanceType<A6> & InstanceType<A7> & InstanceType<A8>, A1 & A2 & A3 & A4 & A5 & A6 & A7 & A8> ?
-                InstanceType<A1> & InstanceType<A2> & InstanceType<A3> & InstanceType<A4> & InstanceType<A5> & InstanceType<A6> & InstanceType<A7> & InstanceType<A8> extends InstanceType<Base> ?
-                    MixinClassConstructor<T>
-                : never
-            : never
-        : never
-    : never
-
-type MixinHelperFunc9 = <A1 extends AnyConstructor, A2 extends AnyConstructor, A3 extends AnyConstructor, A4 extends AnyConstructor, A5 extends AnyConstructor, A6 extends AnyConstructor, A7 extends AnyConstructor, A8 extends AnyConstructor, A9 extends AnyConstructor, T>(required : [ A1, A2, A3, A4, A5, A6, A7, A8, A9 ], arg : T) =>
-    T extends AnyFunction ?
-        Parameters<T> extends [ infer Base ] ?
-            Base extends AnyConstructor<InstanceType<A1> & InstanceType<A2> & InstanceType<A3> & InstanceType<A4> & InstanceType<A5> & InstanceType<A6> & InstanceType<A7> & InstanceType<A8> & InstanceType<A9>, A1 & A2 & A3 & A4 & A5 & A6 & A7 & A8 & A9> ?
-                InstanceType<A1> & InstanceType<A2> & InstanceType<A3> & InstanceType<A4> & InstanceType<A5> & InstanceType<A6> & InstanceType<A7> & InstanceType<A8> & InstanceType<A9> extends InstanceType<Base> ?
-                    MixinClassConstructor<T>
-                : never
-            : never
-        : never
-    : never
-
-type MixinHelperFunc10 = <A1 extends AnyConstructor, A2 extends AnyConstructor, A3 extends AnyConstructor, A4 extends AnyConstructor, A5 extends AnyConstructor, A6 extends AnyConstructor, A7 extends AnyConstructor, A8 extends AnyConstructor, A9 extends AnyConstructor, A10 extends AnyConstructor, T>(required : [ A1, A2, A3, A4, A5, A6, A7, A8, A9, A10 ], arg : T) =>
-    T extends AnyFunction ?
-        Parameters<T> extends [ infer Base ] ?
-            Base extends AnyConstructor<InstanceType<A1> & InstanceType<A2> & InstanceType<A3> & InstanceType<A4> & InstanceType<A5> & InstanceType<A6> & InstanceType<A7> & InstanceType<A8> & InstanceType<A9> & InstanceType<A10>, A1 & A2 & A3 & A4 & A5 & A6 & A7 & A8 & A9 & A10> ?
-                InstanceType<A1> & InstanceType<A2> & InstanceType<A3> & InstanceType<A4> & InstanceType<A5> & InstanceType<A6> & InstanceType<A7> & InstanceType<A8> & InstanceType<A9> & InstanceType<A10> extends InstanceType<Base> ?
-                    MixinClassConstructor<T>
-                : never
-            : never
-        : never
-    : never
+  : never
 //endregion type helpers
 
 //---------------------------------------------------------------------------------------------------------------------
-const isMixinClass = (func : AnyConstructor) : boolean => {
-    return Object.getPrototypeOf(func.prototype).constructor.hasOwnProperty(MixinStateProperty)
+const isMixinClass = (func: AnyConstructor): boolean => {
+  return Object.getPrototypeOf(func.prototype).constructor.hasOwnProperty(MixinStateProperty)
 }
 
-const getMixinState = (func : AnyConstructor) : MixinState => {
-    return Object.getPrototypeOf(func.prototype).constructor[ MixinStateProperty ]
+const getMixinState = (func: AnyConstructor): MixinState => {
+  return Object.getPrototypeOf(func.prototype).constructor[MixinStateProperty]
 }
-
 
 //---------------------------------------------------------------------------------------------------------------------
-const mixin = <T>(required : (AnyConstructor | MixinClass)[], mixinLambda : T) : MixinClassConstructor<T> => {
-    let baseClass : AnyConstructor
+const mixin = <T>(required: (AnyConstructor | MixinClass)[], mixinLambda: T): MixinClassConstructor<T> => {
+  let baseClass: AnyConstructor
 
-    if (required.length > 0) {
-        const lastRequirement    = required[ required.length - 1 ]
+  if (required.length > 0) {
+    const lastRequirement = required[required.length - 1]
 
-        // absence of `[ MixinStateProperty ]` indicates its a regular class and not a mixin class
-        // avoid assigning ZeroBaseClass - it will be applied as default at the end
-        if (!isMixinClass(lastRequirement) && lastRequirement !== ZeroBaseClass) baseClass = lastRequirement
+    // absence of `[ MixinStateProperty ]` indicates its a regular class and not a mixin class
+    // avoid assigning ZeroBaseClass - it will be applied as default at the end
+    if (!isMixinClass(lastRequirement) && lastRequirement !== ZeroBaseClass) baseClass = lastRequirement
+  }
+
+  const requirements: MixinState[] = []
+
+  required.forEach((requirement, index) => {
+    const mixinState = requirement[MixinStateProperty] as MixinState
+
+    if (mixinState !== undefined) {
+      const currentBaseClass = mixinState.baseClass
+
+      // ignore ZeroBaseClass - since those are compatible with any other base class
+      if (currentBaseClass !== ZeroBaseClass) {
+        if (baseClass) {
+          // already found a base class from requirements earlier
+          if (baseClass !== currentBaseClass) {
+            const currentIsSub = currentBaseClass.prototype.isPrototypeOf(baseClass.prototype)
+            const currentIsSuper = baseClass.prototype.isPrototypeOf(currentBaseClass.prototype)
+
+            if (!currentIsSub && !currentIsSuper) throw new Error('Base class mismatch')
+
+            baseClass = currentIsSuper ? currentBaseClass : baseClass
+          }
+        }
+        // first base class from requirements
+        else baseClass = currentBaseClass
+      }
+
+      requirements.push(mixinState)
+    } else {
+      if (index !== required.length - 1) throw new Error('Base class should be provided as the last element of the requirements array')
     }
+  })
 
-    const requirements : MixinState[]    = []
+  //------------------
+  const mixinState = MixinState.new({
+    requirements,
+    mixinLambda: mixinLambda as any,
+    baseClass: baseClass || ZeroBaseClass,
+  })
 
-    required.forEach((requirement, index) => {
-        const mixinState        = requirement[ MixinStateProperty ] as MixinState
-
-        if (mixinState !== undefined) {
-            const currentBaseClass  = mixinState.baseClass
-
-            // ignore ZeroBaseClass - since those are compatible with any other base class
-            if (currentBaseClass !== ZeroBaseClass) {
-                if (baseClass) {
-                    // already found a base class from requirements earlier
-                    if (baseClass !== currentBaseClass) {
-                        const currentIsSub      = currentBaseClass.prototype.isPrototypeOf(baseClass.prototype)
-                        const currentIsSuper    = baseClass.prototype.isPrototypeOf(currentBaseClass.prototype)
-
-                        if (!currentIsSub && !currentIsSuper) throw new Error("Base class mismatch")
-
-                        baseClass   = currentIsSuper ? currentBaseClass : baseClass
-                    }
-
-                } else
-                    // first base class from requirements
-                    baseClass = currentBaseClass
-            }
-
-            requirements.push(mixinState)
-        }
-        else {
-            if (index !== required.length - 1) throw new Error("Base class should be provided as the last element of the requirements array")
-        }
-    })
-
-    //------------------
-    const mixinState    = MixinState.new({
-        requirements,
-        mixinLambda     : mixinLambda as any,
-        baseClass       : baseClass || ZeroBaseClass
-    })
-
-    return mixinState.minimalClass as any
+  return mixinState.minimalClass as any
 }
-
 
 //---------------------------------------------------------------------------------------------------------------------
 // this function works both with default mixin class and mixin application function
 // it supplied internally as [Symbol.hasInstance] for the default mixin class and mixin application function
-const isInstanceOfStatic  = function (this : MixinStateExtension, instance : any) : boolean {
-    return Boolean(instance && instance[ this[ MixinInstanceOfProperty ] ])
+const isInstanceOfStatic = function (this: MixinStateExtension, instance: any): boolean {
+  return Boolean(instance && instance[this[MixinInstanceOfProperty]])
 }
-
 
 //---------------------------------------------------------------------------------------------------------------------
 /**
@@ -537,12 +437,9 @@ const isInstanceOfStatic  = function (this : MixinStateExtension, instance : any
  * @param instance Any value, normally an instance of the mixin class
  * @param func The constructor function of the class, created with [[Mixin]]
  */
-export const isInstanceOf = <T>(instance : any, func : T)
-    : instance is (T extends AnyConstructor<infer A> ? A : unknown) =>
-{
-    return Boolean(instance && instance[ func[ MixinInstanceOfProperty ] ])
+export const isInstanceOf = <T>(instance: any, func: T): instance is T extends AnyConstructor<infer A> ? A : unknown => {
+  return Boolean(instance && instance[func[MixinInstanceOfProperty]])
 }
-
 
 //---------------------------------------------------------------------------------------
 /**
@@ -803,13 +700,12 @@ export const isInstanceOf = <T>(instance : any, func : T)
  * publish actual TypeScript sources along with the generated JavaScript files, instead of publishing JavaScript + declarations files.
  *
  */
-export const Mixin : MixinHelperFunc0 & MixinHelperFunc1 & MixinHelperFunc2 & MixinHelperFunc3 & MixinHelperFunc4 & MixinHelperFunc5 & MixinHelperFunc6 & MixinHelperFunc7 & MixinHelperFunc8 & MixinHelperFunc9 & MixinHelperFunc10 = mixin as any
+export const Mixin: MixinHelperFunc0 & MixinHelperFunc1 & MixinHelperFunc2 & MixinHelperFunc3 & MixinHelperFunc4 & MixinHelperFunc5 & MixinHelperFunc6 & MixinHelperFunc7 & MixinHelperFunc8 & MixinHelperFunc9 & MixinHelperFunc10 = mixin as any
 
 /**
  * This is an exact analog of the [[Mixin]] function, but without type-level protection for requirements mismatch.
  * It supports unlimited number of requirements.
  */
-export const MixinAny : MixinHelperFuncAny = mixin as any
-
+export const MixinAny: MixinHelperFuncAny = mixin as any
 
 export type PrototypeOf<A> = A

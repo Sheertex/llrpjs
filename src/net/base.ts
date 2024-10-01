@@ -1,3 +1,4 @@
+// @ts-nocheck
 import EventEmitter from 'events'
 import net from 'net'
 import { LLRPError } from '../base/error'
