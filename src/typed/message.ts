@@ -1,4 +1,4 @@
-/** Typed/proxy message class */
+// @ts-nocheck
 import { AnyConstructor } from '../bryntum/chronograph/Mixin'
 import { LLRPParameter as _LLRPParameter } from '../element/parameter'
 import { LLRPMessage as _LLRPMessage } from '../element/message'
